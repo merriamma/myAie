@@ -312,15 +312,27 @@ try {
                                     <form action="sendNotif.php" method="POST">
                                         <div class="mb-3">
                                             <label for="nom" class="col-sm-4 col-form-label">Enseignant:</label>
-                                            <select class="form-select" name="nom" aria-label="Default select example">
+                                            <select multiple class="form-select" name="ensg[]" aria-label="Default select example">
+                                                <?php
+                                                include 'connexion.php';
+                                                $query = "SELECT nom FROM enseignant";
+                                                $result = mysqli_query($con, $query);
+                                                while ($row = mysqli_fetch_assoc($result)) {
+                                                    echo "<option value='" . $row['nom'] . "'>" . $row['nom'] . "</option>";
+                                                }
+                                                ?>
+                                            </select>
                                         </div>
                                         <?php
                                         include 'connexion.php';
-                                        $query = "SELECT nom FROM enseignant";
-                                        $result = mysqli_query($con, $query);
-                                        while ($row = mysqli_fetch_assoc($result)) {
-                                            echo "<option value='" . $row['nom'] . "'>" . $row['nom'] . "</option>";
-                                        }
+                                        // $query = "SELECT nom FROM enseignant";
+                                        // $result = mysqli_query($con, $query);
+                                        // while ($row = mysqli_fetch_assoc($result)) {
+                                        //     echo "<div class='form-check'>";
+                                        //     echo "<input class='form-check-input' type='checkbox' name='ensg[]' value='" . $row['nom'] . "'>";
+                                        //     echo "<label class='form-check-label'>" . $row['nom'] . "</label>";
+                                        //     echo "</div>";
+                                        // }
                                         ?>
                                         </select>
                                         <div class="mb-3">
