@@ -1,7 +1,6 @@
 <?php
-require ("session.php");
-// require ("tcpdf/tcpdf.php");
-// Connexion à la base de données
+require("session.php");
+
 $servername = "localhost";
 $username = "root";
 $password = "";
@@ -9,24 +8,19 @@ $dbname = "myproject";
 
 $conn = new mysqli($servername, $username, $password, $dbname);
 
-// Vérification de la connexion
 if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
 
-// Fonction pour sélectionner aléatoirement les enseignants disponibles
-function selectRandomTeachers($conn, $count = 4)
+function getEns($conn, $count = 4)
 {
     $teachers = array();
-
-    // Sélection aléatoire des enseignants disponibles
     $sql = "SELECT nom FROM enseignant ORDER BY RAND() LIMIT ?";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param("i", $count);
     $stmt->execute();
     $result = $stmt->get_result();
 
-    // Récupération des noms des enseignants sélectionnés
     while ($row = $result->fetch_assoc()) {
         $teachers[] = $row['nom'];
     }
@@ -34,60 +28,92 @@ function selectRandomTeachers($conn, $count = 4)
     return $teachers;
 }
 
-// Fonction pour sélectionner aléatoirement un lieu de type amphithéâtre en priorité, sinon n'importe quel type de lieu
 function selectRandomLocation($conn)
 {
-    $location = array();
-
-    // Sélection aléatoire d'un lieu de type "amphi" s'il en existe
+    $lieu = array();
     $sql = "SELECT numero, type_lieu, capacite FROM lieu WHERE type_lieu = 'amphi' ORDER BY RAND() LIMIT 1";
     $result = $conn->query($sql);
 
-    // Si un lieu de type "amphi" est trouvé, le sélectionner
     if ($result->num_rows > 0) {
         while ($row = $result->fetch_assoc()) {
-            $location['numero'] = $row['numero'];
-            $location['type_lieu'] = $row['type_lieu'];
-            $location['capacite'] = $row['capacite'];
+            $lieu = $row;
         }
     } else {
-        // Si aucun lieu de type "amphi" n'est disponible, sélectionner n'importe quel type de lieu
         $sql = "SELECT numero, type_lieu, capacite FROM lieu ORDER BY RAND() LIMIT 1";
         $result = $conn->query($sql);
-
-        // Récupération du lieu sélectionné
         if ($result->num_rows > 0) {
             while ($row = $result->fetch_assoc()) {
-                $location['numero'] = $row['numero'];
-                $location['type_lieu'] = $row['type_lieu'];
-                $location['capacite'] = $row['capacite'];
+                $lieu = $row;
             }
         }
     }
 
-    return $location;
+    return $lieu;
 }
 
+function getGroupes($conn, $section, $nom_specialite)
+{
+    $sql = "SELECT id_groupe, capacite FROM groupe WHERE section = ? AND nom_specialite = ?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("ss", $section, $nom_specialite);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $groupes = [];
+    while ($row = $result->fetch_assoc()) {
+        $groupes[] = $row;
+    }
+    return $groupes;
+}
 
-// Fonction pour récupérer les horaires disponibles à partir de la base de données
+function getLieuxDisponibles($conn)
+{
+    $sql = "SELECT numero, capacite FROM lieu";
+    $result = $conn->query($sql);
+    $lieux = [];
+    while ($row = $result->fetch_assoc()) {
+        $lieux[] = $row;
+    }
+    return $lieux;
+}
+
+function choisirLieu($lieux)
+{
+    return $lieux[array_rand($lieux)];
+}
+
+function capaciteSuffisante($groupe, $lieu)
+{
+    return $groupe['nombre_etudiants'] <= $lieu['capacite'];
+}
+
+function affecterGroupesAuxLieux($conn, $section, $nom_specialite)
+{
+    $groupes = getGroupes($conn, $section, $nom_specialite);
+    $lieux = getLieuxDisponibles($conn);
+
+    foreach ($groupes as $groupe) {
+        $lieu = choisirLieu($lieux);
+        if (capaciteSuffisante($groupe, $lieu)) {
+            $sql = "UPDATE groupe SET lieu_attribue = ? WHERE id_groupe = ?";
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("ii", $lieu['numero'], $groupe['id_groupe']);
+            $stmt->execute();
+        } else {
+            echo "La capacité du lieu n'est pas suffisante pour le groupe ", $groupe['id_groupe'], "\n";
+        }
+    }
+}
+
 function getAvailableHours($conn)
 {
     $hours = array();
-
-    // Sélectionner tous les horaires disponibles
     $sql = "SELECT debut, fin FROM Horaire";
     $result = $conn->query($sql);
-
-    // Récupérer les horaires disponibles
     if ($result->num_rows > 0) {
         while ($row = $result->fetch_assoc()) {
-            $hours[] = array(
-                'debut' => $row['debut'],
-                'fin' => $row['fin']
-            );
+            $hours[] = $row;
         }
     }
-
     return $hours;
 }
 
@@ -95,46 +121,43 @@ function getGroupesForSpecialite($conn, $specialite)
 {
     $sql = "SELECT nom_groupe, section, nombre_etudiants FROM groupe WHERE nom_specialite = ?";
     $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        die("Erreur de préparation de la requête : " . $conn->error);
-    }
     $stmt->bind_param("s", $specialite);
     $stmt->execute();
     $result = $stmt->get_result();
-
     $groupes = array();
     while ($row = $result->fetch_assoc()) {
         $groupes[] = $row;
     }
-
     return $groupes;
 }
+
 function isLieuAvailable($conn, $date, $heureDebut, $heureFin, $lieu_numero)
 {
-    // Vérifie s'il y a des enregistrements dans la table Lieu_NonDisponible qui correspondent au lieu, à la date, et à l'heure spécifiés
     $sql = "SELECT COUNT(*) AS count FROM Lieu_NonDisponible WHERE lieu_numero = ? AND jour = ? AND ((heureDebut >= ? AND heureDebut < ?) OR (heureFin > ? AND heureFin <= ?))";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param("ssssss", $lieu_numero, $date, $heureDebut, $heureFin, $heureDebut, $heureFin);
     $stmt->execute();
     $result = $stmt->get_result();
     $count = $result->fetch_assoc()['count'];
-
-    // Si aucun enregistrement correspondant n'est trouvé, le lieu est disponible
     return $count == 0;
 }
+
 function isEnseignantAvailable($conn, $date, $heureDebut, $heureFin, $nom_enseignant)
 {
-    // Vérifie s'il y a des enregistrements dans la table Enseignant_Disponibilite qui correspondent à l'enseignant, à la date, et à l'heure spécifiés
     $sql = "SELECT COUNT(*) AS count FROM Enseignant_Disponibilite WHERE nom_enseignant = ? AND jour = ? AND heureDebut = ? AND heureFin = ?";
     $stmt = $conn->prepare($sql);
     $stmt->bind_param("ssss", $nom_enseignant, $date, $heureDebut, $heureFin);
     $stmt->execute();
     $result = $stmt->get_result();
     $count = $result->fetch_assoc()['count'];
-
-    // Si aucun enregistrement correspondant n'est trouvé, l'enseignant est disponible
     return $count == 0;
 }
+
+
+
+
+
+
 function getSectionsForSpecialite($conn, $specialite)
 {
     $sql = "SELECT DISTINCT section FROM groupe WHERE nom_specialite = ?";
@@ -153,6 +176,42 @@ function getSectionsForSpecialite($conn, $specialite)
     return $sections;
 }
 
+
+function getGroupesForSection($conn, $specialite, $section)
+{
+    $query = "SELECT * FROM groupe WHERE nom_specialite = ? AND section = ?";
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param("ss", $specialite, $section);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $groupes = $result->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+    return $groupes;
+}
+
+function selectRandomLocationCapacite($conn, $capacite_min)
+{
+    $query = "SELECT * FROM lieu WHERE capacite >= ? ORDER BY RAND() LIMIT 1";
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param("i", $capacite_min);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $lieu = $result->fetch_assoc();
+    $stmt->close();
+    return $lieu;
+}
+
+// Fonction pour obtenir la capacité nécessaire pour tous les groupes d'une section
+function getCapaciteNecessaireSection($conn, $section)
+{
+    $sql = "SELECT SUM(nombre_etudiants) AS total FROM groupe WHERE section = ?";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("s", $section);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
+    return $row['total'];
+}
 
 $daysOfWeek = array(
     'Sunday' => 'Dimanche',
@@ -209,7 +268,7 @@ function generateRandomPlanning($conn, $specialite, $dateDebut, $dateFin)
             $heureFin = $availableHours[$randIndex]['fin'];
 
             // Sélection aléatoire des enseignants disponibles
-            $enseignants = selectRandomTeachers($conn, rand(4, 5)); // Sélectionne aléatoirement entre 4 et 5 enseignants
+            $enseignants = getEns($conn, rand(4, 5)); // Sélectionne aléatoirement entre 4 et 5 enseignants
 
             // Vérifier la disponibilité de chaque enseignant et le remplacer s'il n'est pas disponible
             $enseignantsDisponibles = array();
@@ -233,6 +292,8 @@ function generateRandomPlanning($conn, $specialite, $dateDebut, $dateFin)
 
             // Récupérer les groupes pour cette spécialité
             $groupes = getGroupesForSpecialite($conn, $specialite);
+
+
 
             // Affecter un lieu à chaque section et à ses groupes, en vérifiant la disponibilité des lieux
             $sectionsWithLieux = array();
@@ -301,6 +362,11 @@ function generateRandomPlanning($conn, $specialite, $dateDebut, $dateFin)
     return $planning;
 }
 
+
+
+
+// 
+
 // Fonction pour filtrer le planning en fonction des contraintes
 function filterPlanning($planning, $conn)
 {
@@ -315,6 +381,8 @@ function filterPlanning($planning, $conn)
         $enseignants = $examen['enseignants'];
         $groupes = $examen['groupes'];
         $sections = $examen['sections'];
+
+
 
 
         $enseignantsDisponibles = array();
@@ -337,6 +405,11 @@ function filterPlanning($planning, $conn)
 
         // Mettre à jour les enseignants de l'examen avec les enseignants disponibles
         $examen['enseignants'] = $enseignantsDisponibles;
+
+
+
+
+
 
         // Toutes les contraintes sont satisfaites, ajouter l'examen filtré au planning filtré
         $filteredPlanning[] = $examen;
@@ -367,6 +440,29 @@ function findAvailableTeacher($conn, $date, $heureDebut, $heureFin)
     }
 }
 
+// Fonction pour sélectionner les lieux disponibles pour une date et une période donnée
+function selectAvailableLocations($conn, $date, $heureDebut, $heureFin)
+{
+    $sql = "SELECT numero, type_lieu, capacite FROM lieu WHERE numero NOT IN (
+                SELECT lieu_numero FROM Lieu_NonDisponible
+                WHERE jour = ? AND
+                ((heureDebut <= ? AND heureFin >= ?) OR (heureDebut <= ? AND heureFin >= ?))
+            )";
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("sssss", $date, $heureDebut, $heureDebut, $heureFin, $heureFin);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $locations = array();
+    while ($row = $result->fetch_assoc()) {
+        $locations[] = $row;
+    }
+
+    return $locations;
+}
+
+
+
 // Traitement du formulaire si soumis
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     // Récupération de la spécialité sélectionnée
@@ -376,79 +472,45 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $periode = $_POST["periode"];
     list($dateDebut, $dateFin) = explode(" à ", $periode);
 
+
+
     // Générer un planning initial pour la spécialité "Informatique" pour une période donnée (1er au 30 mai 2024)
     $planningInitial = generateRandomPlanning($conn, $specialite, $dateDebut, $dateFin);
 
     // Filtrer le planning initial en fonction des contraintes
     $planningFiltre = filterPlanning($planningInitial, $conn);
-
 }
 
-// Vérifier si le formulaire a été soumis
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
-    // Connexion à la base de données
-    $pdo = new PDO('mysql:host=localhost;dbname=myproject', 'root', '');
+// Si le formulaire est soumis et des examens sont générés
+if (isset($_POST['enregistrer'])) {
+    foreach ($planningFiltre as $examen) {
+        // Convertir les heures au format TIME
+        $heureDebut = date('H:i:s', strtotime($examen['heureDebut']));
+        $heureFin = date('H:i:s', strtotime($examen['heureFin']));
 
-    // Fonction pour insérer les données d'un enseignant dans la table Enseignant_Disponibilite
-    function inserer_enseignant($date, $heure_debut, $heure_fin, $nom_enseignant) {
-        global $pdo;
-        
-        // Préparer la requête d'insertion
-        $stmt = $pdo->prepare("INSERT INTO Enseignant_Disponibilite (jour, heureDebut, heureFin, nom_enseignant) VALUES (:date, :heureDebut, :heureFin, :nom_enseignant)");
-        
-        // Exécuter la requête avec les valeurs des paramètres
-        $stmt->execute([
-            ':date' => $date,
-            ':heureDebut' => $heure_debut,
-            ':heureFin' => $heure_fin,
-            ':nom_enseignant' => $nom_enseignant
-        ]);
-    }
+        // Stocker les enseignants dans une variable
+        $enseignants = implode(", ", $examen['enseignants']);
 
-    // Fonction pour insérer les données d'un lieu dans la table Lieu_NonDisponible
-    function inserer_lieu($date, $heure_debut, $heure_fin, $lieu_numero) {
-        global $pdo;
-        
-        // Préparer la requête d'insertion
-        $stmt = $pdo->prepare("INSERT INTO Lieu_NonDisponible (jour, heureDebut, heureFin, lieu_numero) VALUES (:date, :heureDebut, :heureFin, :lieu_numero)");
-        
-        // Exécuter la requête avec les valeurs des paramètres
-        $stmt->execute([
-            ':date' => $date,
-            ':heureDebut' => $heure_debut,
-            ':heureFin' => $heure_fin,
-            ':lieu_numero' => $lieu_numero
-        ]);
-    }
+        // Préparation de la requête SQL pour l'insertion dans la table examens
+        $sql = "INSERT INTO Examen (jour, dateDebut, dateFin, nom_specialite, id_module, surveillants, lieu_numero, groupe_nom) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
 
-    // Récupérer les données du formulaire
-    $specialite = $_POST['specialite'];
-    $periode = $_POST['periode'];
-
-    // Traitement des données de période pour extraire la date de début et la date de fin
-    list($dateDebut, $dateFin) = explode(" à ", $periode);
-
-    // Traiter les données du planning et les insérer dans la base de données
-    foreach ($planningFiltre as $exam) {
-        // Récupérer les données de l'examen
-        $date = $exam['date'];
-        $heure_debut = $exam['heureDebut'];
-        $heure_fin = $exam['heureFin'];
-
-        // Insérer les données pour chaque enseignant
-        foreach ($exam['enseignants'] as $enseignant) {
-            inserer_enseignant($date, $heure_debut, $heure_fin, $enseignant);
+        // Préparation de la déclaration SQL
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            die("Erreur de préparation de la requête : " . $conn->error);
         }
 
-        // Insérer les données pour chaque lieu
-        foreach ($exam['groupes'] as $groupe) {
-            $lieu_numero = $groupe['numero_lieu'];
-            inserer_lieu($date, $heure_debut, $heure_fin, $lieu_numero);
+        // Liaison des valeurs et exécution de la requête
+        $stmt->bind_param("ssssisss", $examen['date'], $heureDebut, $heureFin, $examen['nom_specialite'], $examen['id_module'], $enseignants, $examen['numero_lieu'], $examen['groupe_nom']);
+        $stmt->execute();
+
+        // Vérification des erreurs d'exécution
+        if ($stmt->errno) {
+            echo "Erreur d'insertion dans la base de données: " . $stmt->error;
         }
     }
+    echo "Les données ont été ajoutées avec succès à la table Examen.";
 }
-
-
 ?>
 
 
@@ -461,9 +523,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
 
     <!-- Boxicons -->
     <link href='https://unpkg.com/boxicons@2.0.9/css/boxicons.min.css' rel='stylesheet'>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.4/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
+    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script> -->
 
 
 
@@ -556,6 +620,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
             </form>
             <input type="checkbox" id="switch-mode" hidden>
             <label for="switch-mode" class="switch-mode"></label>
+            <!-- <a href="#" class="notification"> -->
+            <!-- <i class='bx bxs-bell'></i> -->
+            <!-- <span class="num">8</span> -->
+            <!-- </a> -->
             <a href="#" class="profile">
                 <i class='bx bx-user'></i>
             </a>
@@ -612,20 +680,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
                     <div class="order">
                         <div class="head">
                             <h3>Generation de planning</h3>
-                            
+
                             <i class='bx bx-filter'></i>
                         </div>
 
 
-                        <?php
-                        // Tri du tableau $randomPlanning par la clé 'date'
-                        usort($planningFiltre, function ($a, $b) {
-                            return strtotime($a['date']) - strtotime($b['date']);
-                        });
 
-                        ?>
+
                         <!-- Affichage du planning d'examens généré -->
-                        <?php if (isset($planningFiltre) && !empty($planningFiltre)): ?>
+                        <?php if (isset($planningFiltre) && !empty($planningFiltre)) : ?>
                             <h2>Planning pour la spécialité <?php echo $specialite; ?> dans la période du
                                 <?php echo $dateDebut; ?> au <?php echo $dateFin; ?>
                             </h2>
@@ -639,7 +702,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
                                     <!-- <th>Lieu</th> -->
                                     <th>Surveillants</th>
                                 </tr>
-                                <?php foreach ($planningFiltre as $exam): ?>
+                                <?php foreach ($planningFiltre as $exam) : ?>
                                     <tr>
                                         <td><?php echo $exam['date']; ?> <br> <?php echo " de " . $exam['heureDebut']; ?> <br>
                                             <?php echo " à " . $exam['heureFin']; ?> </td>
@@ -660,7 +723,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
                                         </td>
                                         <!-- Afficher le type de lieu et le numéro -->
                                         <td>
-                                            <?php foreach ($exam['enseignants'] as $enseignant): ?>
+                                            <?php foreach ($exam['enseignants'] as $enseignant) : ?>
                                                 <?php echo $enseignant; ?><br>
                                             <?php endforeach; ?>
                                         </td>
@@ -701,10 +764,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
             var fileName = 'planning_examens.xlsx';
 
             // Convertir le workbook en binaire Excel
-            var binaryData = XLSX.write(wb, { bookType: 'xlsx', type: 'binary' });
+            var binaryData = XLSX.write(wb, {
+                bookType: 'xlsx',
+                type: 'binary'
+            });
 
             // Créer un objet Blob pour le contenu binaire
-            var blob = new Blob([s2ab(binaryData)], { type: 'application/octet-stream' });
+            var blob = new Blob([s2ab(binaryData)], {
+                type: 'application/octet-stream'
+            });
 
             // Créer un objet URL à partir du Blob
             var url = URL.createObjectURL(blob);
@@ -726,12 +794,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
             for (var i = 0; i != s.length; ++i) view[i] = s.charCodeAt(i) & 0xFF;
             return buf;
         }
-
     </script>
 
     <script>
         // JavaScript pour télécharger le PDF
-        document.getElementById("downloadBtn").addEventListener("click", function () {
+        document.getElementById("downloadBtn").addEventListener("click", function() {
             var table = document.getElementById("tableauPlanning");
             var html = table.outerHTML;
 
@@ -743,9 +810,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['enregistrer'])) {
             pdf.save("table.pdf");
         });
     </script>
-
     <!-- Bibliothèque jsPDF -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.4.0/jspdf.umd.min.js"></script>
 </body>
 
 <script src="assets/js/planning.js"></script>
